@@ -1,0 +1,205 @@
+# Class Reflection — 18 August 2026
+
+**Course:** CSC360  
+**Date:** 18 August 2026
+
+---
+
+## Overview
+
+Today's class introduced the foundational ideas behind rendering graphics in Java — from the mathematics of positioning shapes on screen, to the frameworks that make those shapes appear in a window. Alongside the graphical concepts, we explored how a Java project is structured and configured using Maven. This reflection aims to connect those ideas rather than simply restate them.
+
+---
+
+## 1. Thinking About a Square Geometrically
+
+Before writing a single line of Java, it helps to think about what a square actually needs in order to be drawn. A square has only two defining values: a **side length** and a **position**. Everything else — the four corners, the bounding box, the center — follows from those two values.
+
+The position can be given in two ways that are equivalent but require different calculations:
+
+- **Top-left corner `(x, y)`**: This is what Java's drawing API expects directly. All four corners are obtained by adding `s` (the side length) along whichever axes are needed.
+- **Center `(cx, cy)`**: This is more intuitive when trying to place a shape visually. Converting to the top-left corner requires subtracting half the side length from each coordinate.
+
+The conversion formula is straightforward:
+
+```
+x = cx − s/2
+y = cy − s/2
+```
+
+What makes this slightly tricky is Java's coordinate system.
+
+---
+
+## 2. The Inverted Y-Axis and Why It Matters
+
+In the mathematics taught in most schools, the y-axis points upward. In Java's graphics system — and in most screen-based environments — it points **downward**. The point `(0, 0)` sits at the **top-left** of the component, not the bottom-left.
+
+```
+(0,0) ────────────► +x
+  │
+  │
+  ▼
+ +y
+```
+
+This inversion does not change the arithmetic used to find corners — those formulas hold in any orthogonal coordinate system — but it does affect how we interpret the results visually. Moving "up" on screen means decreasing the y-coordinate, and moving "down" means increasing it.
+
+The four corners of a square, expressed in terms of its center and side length, are:
+
+| Corner | x | y |
+|:---|:---|:---|
+| Top-left | `cx − s/2` | `cy − s/2` |
+| Top-right | `cx + s/2` | `cy − s/2` |
+| Bottom-left | `cx − s/2` | `cy + s/2` |
+| Bottom-right | `cx + s/2` | `cy + s/2` |
+
+Because `drawRect` takes a top-left corner plus a width and height, knowing this single anchor point is enough to draw the entire square:
+
+```java
+g2d.drawRect(x, y, s, s);  // outline only
+g2d.fillRect(x, y, s, s);  // filled
+```
+
+Passing equal values for width and height is what makes the result a square rather than a general rectangle.
+
+---
+
+## 3. Keeping the Square Centered During Resizing
+
+One practical challenge is that a window can be resized after it opens. If the square's position is calculated once at startup and never updated, it will appear off-center as soon as the window changes size.
+
+The solution is to compute the position inside `paintComponent`, which is called every time the component needs to repaint — including after a resize:
+
+```java
+@Override
+protected void paintComponent(Graphics g) {
+    super.paintComponent(g);
+    Graphics2D g2d = (Graphics2D) g.create();
+
+    int side = 200;
+    int x = (getWidth() - side) / 2;
+    int y = (getHeight() - side) / 2;
+
+    g2d.drawRect(x, y, side, side);
+    g2d.dispose();
+}
+```
+
+`getWidth()` and `getHeight()` return the component's current dimensions. Subtracting the square's size from each dimension and halving the remainder distributes the leftover space equally on both sides, keeping the square centered regardless of window size.
+
+The call to `super.paintComponent(g)` clears any previous frame before drawing the new one. Using `g.create()` and `g2d.dispose()` keeps the custom rendering settings isolated, so they do not affect other parts of the UI that paint after this component.
+
+---
+
+## 4. How Maven Organises a Java Project
+
+Maven is a build tool built around the idea of **convention over configuration**. Rather than requiring every project to specify where its source files are, Maven assumes a standard layout and only needs a configuration file when the project deviates from the convention.
+
+The standard directory structure is:
+
+```
+project-root/
+├── pom.xml
+├── src/
+│   ├── main/
+│   │   ├── java/         ← application source code
+│   │   └── resources/    ← images, config files, other assets
+│   └── test/
+│       ├── java/         ← test classes
+│       └── resources/    ← test-specific assets
+└── target/               ← compiled output (generated, not edited manually)
+```
+
+Java packages mirror subdirectories. A class declared as `package com.example.graphics;` should live at `src/main/java/com/example/graphics/`. This mapping allows Maven, IDEs, and other tools to locate and compile classes without any additional instruction.
+
+The `target/` directory is entirely generated by Maven and should be excluded from version control. Everything a collaborator needs to reproduce the build is in the source tree.
+
+---
+
+## 5. The Role of `pom.xml`
+
+`pom.xml` is the single file that tells Maven everything it needs to know about a project. Its three most important responsibilities are:
+
+1. **Project identity** — the `groupId`, `artifactId`, and `version` tuple (often called GAV coordinates) that uniquely identify the project in a repository.
+2. **Compiler configuration** — specifying which Java version to compile against and what character encoding to use.
+3. **Dependency and plugin management** — listing external libraries so Maven can download them automatically, making the project reproducible on any machine without manual setup.
+
+A minimal `pom.xml` might look like this:
+
+```xml
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>com.example</groupId>
+    <artifactId>graphics-square</artifactId>
+    <version>1.0-SNAPSHOT</version>
+
+    <properties>
+        <maven.compiler.source>21</maven.compiler.source>
+        <maven.compiler.target>21</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    </properties>
+</project>
+```
+
+Common Maven commands and what they do:
+
+| Command | Effect |
+|:---|:---|
+| `mvn clean` | Removes the `target/` directory. |
+| `mvn compile` | Compiles source files into bytecode. |
+| `mvn test` | Compiles and runs all test classes. |
+| `mvn package` | Compiles, tests, and produces a `.jar` file. |
+| `mvn clean package` | Removes old output and rebuilds from scratch. |
+
+---
+
+## 6. The Java Graphics Stack
+
+Several distinct layers work together to display a Swing window with custom graphics:
+
+```
+┌────────────────────────────────────┐
+│            JavaFX                  │  Scene graph, CSS, FXML (separate distribution)
+└────────────────────────────────────┘
+┌────────────────────────────────────┐
+│            Swing                   │  Lightweight components: JFrame, JPanel, JButton
+├────────────────────────────────────┤
+│           Java 2D                  │  Shapes, strokes, gradients, transforms, anti-aliasing
+├────────────────────────────────────┤
+│            AWT                     │  OS windowing bridge, event queue, base Graphics context
+└────────────────────────────────────┘
+```
+
+**AWT** is the oldest layer. It delegates to native operating-system components to draw its controls, which is why those controls are described as *heavyweight*. AWT provides the underlying event dispatch mechanism and the base `Graphics` class that Java 2D extends.
+
+**Swing** is built on top of AWT but draws its own components in pure Java, making them *lightweight* and visually consistent across platforms. Swing class names begin with `J`. Creating or modifying Swing components off the main thread can cause subtle rendering problems, so all UI work should be scheduled on the **Event Dispatch Thread (EDT)** using `SwingUtilities.invokeLater`.
+
+**Java 2D** is the rendering subsystem shared by AWT and Swing. It offers everything needed for sophisticated 2D graphics: precise shape primitives, configurable stroke styles, gradient fills, clipping regions, and affine transformations such as rotation and scaling. Custom Swing drawing is done by overriding `paintComponent` and using a `Graphics2D` context.
+
+**JavaFX** takes a different approach: rather than building on AWT, it uses a scene graph and hardware acceleration. It supports CSS styling and FXML layout files. Unlike AWT, Swing, and Java 2D — which ship with the standard JDK — JavaFX must be added as an external module (OpenJFX).
+
+---
+
+## Connections Between Topics
+
+What struck me about today's class was how naturally the topics connect. The mathematics of the coordinate system explains why the Java API is designed the way it is — `drawRect` takes a top-left corner because the origin is top-left. The layered stack of AWT, Swing, and Java 2D explains why both `Graphics` and `Graphics2D` exist, and why casting is needed to access the more powerful API. Maven's conventions explain why the package name in a source file and the directory path on disk are always in sync.
+
+Understanding these connections makes it easier to reason about unfamiliar code rather than having to memorise each rule in isolation.
+
+---
+
+## Summary
+
+| Topic | Core Idea |
+|:---|:---|
+| Square geometry | Two values — side length and an anchor point — determine all four corners. |
+| Java coordinate system | Origin is top-left; positive y points downward. |
+| Centering on resize | Recalculate position inside `paintComponent` using `getWidth()` / `getHeight()`. |
+| Maven layout | Predictable directory structure eliminates per-project configuration. |
+| `pom.xml` | Centralises project identity, compiler settings, and dependencies. |
+| AWT | Provides OS-level windowing and the event dispatch queue. |
+| Swing | Adds lightweight, cross-platform UI components on top of AWT. |
+| Java 2D | Handles 2D shape drawing, fills, and transformations inside Swing panels. |
+| JavaFX | A separate, modern scene-graph framework with CSS and FXML support. |
